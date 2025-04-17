@@ -448,3 +448,6 @@ class ImageTextToTextPipeline(Pipeline):
         ]
 
         return records
+
+
+__all__ = ["ImageTextToTextPipeline"]

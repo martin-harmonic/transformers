@@ -496,3 +496,12 @@ def post_init_awq_ipex_modules(model):
     model = ipex_post_init(model)
 
     return model
+
+
+__all__ = [
+    "fuse_awq_modules",
+    "post_init_awq_exllama_modules",
+    "post_init_awq_ipex_modules",
+    "replace_quantization_scales",
+    "replace_with_awq_linear",
+]

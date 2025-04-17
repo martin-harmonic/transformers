@@ -411,3 +411,6 @@ class PushToHubCallback(keras.callbacks.Callback):
             with (self.output_dir / "README.md").open("w") as f:
                 f.write(model_card)
             self.repo.push_to_hub(commit_message="End of training", blocking=True)
+
+
+__all__ = ["KerasMetricCallback", "PushToHubCallback"]

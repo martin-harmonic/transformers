@@ -286,3 +286,6 @@ def replace_with_bitnet_linear(
         )
 
     return model
+
+
+__all__ = ["BitLinear", "pack_weights", "replace_with_bitnet_linear", "unpack_weights"]

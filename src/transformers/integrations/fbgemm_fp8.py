@@ -282,3 +282,6 @@ def replace_with_fbgemm_fp8_linear(
         )
 
     return model
+
+
+__all__ = ["FbgemmFp8Linear", "FbgemmFp8Llama4TextExperts", "replace_with_fbgemm_fp8_linear"]

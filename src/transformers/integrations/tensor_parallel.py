@@ -21,6 +21,7 @@ import torch
 from torch import nn
 
 from ..utils import is_torch_greater_or_equal, logging
+from ..utils.import_utils import requires
 
 
 ALL_LAYERNORM_LAYERS = [nn.LayerNorm]
@@ -545,6 +546,7 @@ SUPPORTED_TP_STYLES = {
 
 
 @lru_cache
+@requires(backends=("torch>=2.3",))
 def translate_to_torch_parallel_style(style: str):
     """
     In model configurations, we use a neutral type (string) to specify parallel
@@ -617,6 +619,7 @@ def add_tensor_parallel_hooks_to_module(model, module, tp_plan, layer_name, curr
             tp_layer.prepare_module_tp(module_to_tp_, device_mesh)
 
 
+@requires(backends=("torch>=2.3",))
 def shard_and_distribute_module(
     model, param, empty_param, parameter_name, param_casting_dtype, is_contiguous, rank, device_mesh
 ):
@@ -670,3 +673,6 @@ def shard_and_distribute_module(
     setattr(module_to_tp, param_type, param)
     # module_to_tp.load_state_dict({param_type: param}, strict=False, assign=True)
     return param
+
+
+__all__ = ["shard_and_distribute_module", "SUPPORTED_TP_STYLES", "translate_to_torch_parallel_style"]

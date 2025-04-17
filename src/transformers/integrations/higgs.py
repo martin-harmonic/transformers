@@ -653,3 +653,6 @@ def dequantize_higgs(model, current_key_name=None):
             # Remove the last key for recursion
             current_key_name.pop(-1)
         return model
+
+
+__all__ = ["HiggsLinear", "dequantize_higgs", "quantize_with_higgs", "replace_with_higgs_linear"]

@@ -35,6 +35,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
+from .utils.import_utils import requires
+
 
 # Integrations must be imported before ML frameworks:
 # isort: off
@@ -177,7 +179,6 @@ from .utils import (
     strtobool,
 )
 from .utils.deprecation import deprecate_kwarg
-from .utils.import_utils import requires
 from .utils.quantization_config import QuantizationMethod
 
 
@@ -319,6 +320,7 @@ FSDP_MODEL_NAME = "pytorch_model_fsdp"
         "accelerate",
     )
 )
+@requires(backends=("torch",))
 class Trainer:
     """
     Trainer is a simple but feature-complete training and eval loop for PyTorch, optimized for 🤗 Transformers.
@@ -5340,3 +5342,6 @@ class Trainer:
             len_dataloader,
             max_steps,
         )
+
+
+__all__ = ["Trainer"]

@@ -16,7 +16,7 @@ import torch
 
 from transformers.generation.configuration_utils import GenerationConfig
 
-from ..utils.import_utils import is_torch_available
+from ..utils.import_utils import is_torch_available, requires
 
 
 if is_torch_available():
@@ -24,6 +24,7 @@ if is_torch_available():
     from transformers.pytorch_utils import is_torch_greater_or_equal, is_torch_greater_or_equal_than_2_3
 
 
+@requires(backends=("torch",))
 class TorchExportableModuleWithStaticCache(torch.nn.Module):
     """
     A wrapper module designed to make a `PreTrainedModel` exportable with `torch.export`,
@@ -178,6 +179,7 @@ class TorchExportableModuleWithStaticCache(torch.nn.Module):
         return torch.tensor([response_tokens], dtype=torch.long)
 
 
+@requires(backends=("torch",))
 def convert_and_export_with_cache(
     model: PreTrainedModel,
     example_input_ids: Optional[torch.Tensor] = None,
@@ -406,3 +408,6 @@ class Seq2SeqLMExportableModule(torch.nn.Module):
                     break
 
             return generated_ids
+
+
+__all__ = ["TorchExportableModuleWithStaticCache", "convert_and_export_with_cache"]
