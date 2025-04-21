@@ -19,12 +19,15 @@ import importlib.machinery
 import importlib.metadata
 import importlib.util
 import json
+import operator
 import os
+import re
 import shutil
 import subprocess
 import sys
 import warnings
 from collections import OrderedDict
+from enum import Enum
 from functools import lru_cache
 from itertools import chain
 from types import ModuleType
@@ -1810,8 +1813,16 @@ def requires_backends(obj, backends):
     if "tf" in backends and "torch" not in backends and is_torch_available() and not is_tf_available():
         raise ImportError(TF_IMPORT_ERROR_WITH_PYTORCH.format(name))
 
-    checks = (BACKENDS_MAPPING[backend] for backend in backends)
-    failed = [msg.format(name) for available, msg in checks if not available()]
+    failed = []
+    for backend in backends:
+        if isinstance(backend, Backend):
+            available, msg = backend.is_satisfied, backend.error_message
+        else:
+            available, msg = BACKENDS_MAPPING[backend]
+
+        if not available():
+            failed.append(msg.format(name))
+
     if failed:
         raise ImportError("".join(failed))
 
@@ -1889,11 +1900,17 @@ class _LazyModule(ModuleType):
                     chain(*[[k.rsplit(".", i)[0] for i in range(k.count(".") + 1)] for k in list(module.keys())])
                 )
                 for backend in backends:
-                    if backend not in BACKENDS_MAPPING:
-                        raise ValueError(
-                            f"Error: the following backend: '{backend}' was specified around object {module} but isn't specified in the backends mapping."
-                        )
-                    callable, error = BACKENDS_MAPPING[backend]
+                    if backend in BACKENDS_MAPPING:
+                        callable, _ = BACKENDS_MAPPING[backend]
+                    else:
+                        if any(key in backend for key in ["=", "<", ">"]):
+                            backend = Backend(backend)
+                            callable = backend.is_satisfied
+                        else:
+                            raise ValueError(
+                                f"Backend should be defined in the BACKENDS_MAPPING. Offending backend: {backend}"
+                            )
+
                     if not callable():
                         missing_backends.append(backend)
                 self._modules = self._modules.union(module_keys)
@@ -2018,6 +2035,64 @@ def direct_transformers_import(path: str, file="__init__.py") -> ModuleType:
     return module
 
 
+class VersionComparison(Enum):
+    EQUAL = operator.eq
+    NOT_EQUAL = operator.ne
+    GREATER_THAN = operator.gt
+    LESS_THAN = operator.lt
+    GREATER_THAN_OR_EQUAL = operator.ge
+    LESS_THAN_OR_EQUAL = operator.le
+
+    @staticmethod
+    def from_string(version_string: str) -> "VersionComparison":
+        string_to_operator = {
+            "=": VersionComparison.EQUAL.value,
+            "==": VersionComparison.EQUAL.value,
+            "!=": VersionComparison.NOT_EQUAL.value,
+            ">": VersionComparison.GREATER_THAN.value,
+            "<": VersionComparison.LESS_THAN.value,
+            ">=": VersionComparison.GREATER_THAN_OR_EQUAL.value,
+            "<=": VersionComparison.LESS_THAN_OR_EQUAL.value,
+        }
+
+        return string_to_operator[version_string]
+
+
+@lru_cache()
+def split_package_version(package_version_str) -> Tuple[str, str, str]:
+    pattern = r"([a-zA-Z0-9_-]+)([!<>=~]+)([0-9.]+)"
+    match = re.match(pattern, package_version_str)
+    if match:
+        return (match.group(1), match.group(2), match.group(3))
+    else:
+        raise ValueError(f"Invalid package version string: {package_version_str}")
+
+
+class Backend:
+    def __init__(self, backend_requirement: str):
+        self.package_name, self.version_comparison, self.version = split_package_version(backend_requirement)
+
+        if self.package_name not in BACKENDS_MAPPING:
+            raise ValueError(
+                f"Backends should be defined in the BACKENDS_MAPPING. Offending backend: {self.package_name}"
+            )
+
+    def is_satisfied(self) -> bool:
+        return VersionComparison.from_string(self.version_comparison)(
+            version.parse(importlib.metadata.version(self.package_name)), version.parse(self.version)
+        )
+
+    def __repr__(self) -> str:
+        return f'Backend("{self.package_name}", {VersionComparison[self.version_comparison]}, "{self.version}")'
+
+    @property
+    def error_message(self):
+        return (
+            f"{{0}} requires the {self.package_name} library version {self.version_comparison}{self.version}. That"
+            f" library was not found with this version in your environment."
+        )
+
+
 def requires(*, backends=()):
     """
     This decorator enables two things:
@@ -2025,15 +2100,22 @@ def requires(*, backends=()):
       to execute correctly without instantiating it
     - The '@requires' string is used to dynamically import objects
     """
-    for backend in backends:
-        if backend not in BACKENDS_MAPPING:
-            raise ValueError(f"Backend should be defined in the BACKENDS_MAPPING. Offending backend: {backend}")
 
     if not isinstance(backends, tuple):
         raise ValueError("Backends should be a tuple.")
 
+    applied_backends = []
+    for backend in backends:
+        if backend in BACKENDS_MAPPING:
+            applied_backends.append(backend)
+        else:
+            if any(key in backend for key in ["=", "<", ">"]):
+                applied_backends.append(Backend(backend))
+            else:
+                raise ValueError(f"Backend should be defined in the BACKENDS_MAPPING. Offending backend: {backend}")
+
     def inner_fn(fun):
-        fun.__backends = backends
+        fun.__backends = applied_backends
         return fun
 
     return inner_fn
