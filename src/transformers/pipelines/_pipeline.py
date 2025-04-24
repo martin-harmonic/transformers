@@ -1091,7 +1091,7 @@ def pipeline(
                 and isinstance(model_name, str)
             ):
                 try:
-                    import kenlm  # to trigger `ImportError` if not installed
+                    import kenlm  # noqa F401 # to trigger `ImportError` if not installed
                     from pyctcdecode import BeamSearchDecoderCTC
 
                     if os.path.isdir(model_name) or os.path.isfile(model_name):
