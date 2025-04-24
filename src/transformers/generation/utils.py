@@ -5242,16 +5242,6 @@ def _dola_select_contrast(
 
 __all__ = [
     "GenerationMixin",
-    "GreedySearchEncoderDecoderOutput",
-    "GreedySearchDecoderOnlyOutput",
-    "SampleEncoderDecoderOutput",
-    "SampleDecoderOnlyOutput",
-    "BeamSearchEncoderDecoderOutput",
-    "BeamSearchDecoderOnlyOutput",
-    "BeamSampleEncoderDecoderOutput",
-    "BeamSampleDecoderOnlyOutput",
-    "ContrastiveSearchEncoderDecoderOutput",
-    "ContrastiveSearchDecoderOnlyOutput",
     "GenerateBeamDecoderOnlyOutput",
     "GenerateBeamEncoderDecoderOutput",
     "GenerateDecoderOnlyOutput",

@@ -1927,8 +1927,12 @@ class _LazyModule(ModuleType):
                                 f"Backend should be defined in the BACKENDS_MAPPING. Offending backend: {backend}"
                             )
 
-                    if not callable():
+                    try:
+                        if not callable():
+                            missing_backends.append(backend)
+                    except (importlib.metadata.PackageNotFoundError, ModuleNotFoundError, RuntimeError):
                         missing_backends.append(backend)
+
                 self._modules = self._modules.union(module_keys)
 
                 for key, values in module.items():
@@ -2006,10 +2010,21 @@ class _LazyModule(ModuleType):
 
             value = Placeholder
         elif name in self._class_to_module.keys():
-            module = self._get_module(self._class_to_module[name])
-            value = getattr(module, name)
+            try:
+                module = self._get_module(self._class_to_module[name])
+                value = getattr(module, name)
+            except (ModuleNotFoundError, RuntimeError) as e:
+                raise ModuleNotFoundError(
+                    f"Could not import module '{name}'. Are this object's requirements defined correctly?"
+                ) from e
+
         elif name in self._modules:
-            value = self._get_module(name)
+            try:
+                value = self._get_module(name)
+            except (ModuleNotFoundError, RuntimeError) as e:
+                raise ModuleNotFoundError(
+                    f"Could not import module '{name}'. Are this object's requirements defined correctly?"
+                ) from e
         else:
             value = None
             for key, values in self._explicit_import_shortcut.items():

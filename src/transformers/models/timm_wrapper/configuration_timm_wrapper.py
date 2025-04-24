@@ -17,6 +17,7 @@
 
 from typing import Any, Dict
 
+from ... import requires
 from ...configuration_utils import PretrainedConfig
 from ...utils import is_timm_available, logging, requires_backends
 
@@ -28,6 +29,7 @@ if is_timm_available():
 logger = logging.get_logger(__name__)
 
 
+@requires(backends=("timm",))
 class TimmWrapperConfig(PretrainedConfig):
     r"""
     This is the configuration class to store the configuration for a timm backbone [`TimmWrapper`].

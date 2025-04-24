@@ -17,23 +17,42 @@ import re
 from functools import lru_cache, partial
 from typing import List, Optional, Tuple, Union
 
-import torch
-from torch import nn
-
 from ..utils import is_torch_greater_or_equal, logging
-from ..utils.import_utils import requires
+from ..utils.import_utils import is_torch_available, requires
 
 
-ALL_LAYERNORM_LAYERS = [nn.LayerNorm]
+if is_torch_available():
+    import torch
+    from torch import nn
+    from torch.nn import LayerNorm
+
+    # Cache this result has it's a C FFI call which can be pretty time-consuming
+    _torch_distributed_available = torch.distributed.is_available()
+
+    if is_torch_greater_or_equal("2.5") and _torch_distributed_available:
+        from torch.distributed.tensor import DTensor, Placement, Replicate, Shard
+
+    str_to_torch_dtype = {
+        "BOOL": torch.bool,
+        "U8": torch.uint8,
+        "I8": torch.int8,
+        "I16": torch.int16,
+        "F16": torch.float16,
+        "BF16": torch.bfloat16,
+        "I32": torch.int32,
+        "F32": torch.float32,
+        "F64": torch.float64,
+        "I64": torch.int64,
+        "F8_E4M3": torch.float8_e4m3fn,
+    }
+else:
+    LayerNorm = None
+    str_to_torch_dtype = {}
+
+
+ALL_LAYERNORM_LAYERS = [LayerNorm]
 
 logger = logging.get_logger(__name__)
-
-# Cache this result has it's a C FFI call which can be pretty time-consuming
-_torch_distributed_available = torch.distributed.is_available()
-
-
-if is_torch_greater_or_equal("2.5") and _torch_distributed_available:
-    from torch.distributed.tensor import DTensor, Placement, Replicate, Shard
 
 
 def _blocks_to_block_sizes(total_size: int, blocks: Union[int, List[int]]) -> List[int]:
@@ -60,21 +79,6 @@ def _blocks_to_block_sizes(total_size: int, blocks: Union[int, List[int]]) -> Li
         assert total_size % blocks == 0, f"Prepacked is not divisible by {blocks}"
         single_size = total_size // blocks
         return [single_size] * blocks
-
-
-str_to_torch_dtype = {
-    "BOOL": torch.bool,
-    "U8": torch.uint8,
-    "I8": torch.int8,
-    "I16": torch.int16,
-    "F16": torch.float16,
-    "BF16": torch.bfloat16,
-    "I32": torch.int32,
-    "F32": torch.float32,
-    "F64": torch.float64,
-    "I64": torch.int64,
-    "F8_E4M3": torch.float8_e4m3fn,
-}
 
 
 def get_packed_weights(param, empty_param, device_mesh, rank, dim):
@@ -155,11 +159,11 @@ def get_tensor_shard(param, empty_param, device_mesh, rank, dim):
 
 
 def distribute_module(
-    module: nn.Module,
+    module: "nn.Module",
     device_mesh=None,
     input_fn=None,
     output_fn=None,
-) -> nn.Module:
+) -> "nn.Module":
     """
     Copy pasted from torch's function but we remove the communications (partitionning)
     as well as buffer registering that is similarly not efficient.
@@ -188,7 +192,7 @@ class TensorParallelLayer:
     def partition_tensor(self, param, empty_param, param_type, param_casting_dtype, to_contiguous, rank, device_mesh):
         raise NotImplementedError
 
-    def prepare_module_tp(self, module: nn.Module, device_mesh) -> nn.Module:
+    def prepare_module_tp(self, module: "nn.Module", device_mesh) -> "nn.Module":
         if self.use_dtensor:
             distribute_module(
                 module,
@@ -250,7 +254,7 @@ class IsolatedParallel(TensorParallelLayer):
         # TODO: figure out dynamo support for instance method and switch this to instance method
         return outputs
 
-    def prepare_module_tp(self, module: nn.Module, device_mesh) -> nn.Module:
+    def prepare_module_tp(self, module: "nn.Module", device_mesh) -> "nn.Module":
         distribute_module(
             module,
             device_mesh,
@@ -410,7 +414,7 @@ class RowwiseParallel(TensorParallelLayer):
         # back to local tensor if use_local_output is True
         return outputs.to_local() if use_local_output else outputs
 
-    def prepare_module_tp(self, module: nn.Module, device_mesh) -> nn.Module:
+    def prepare_module_tp(self, module: "nn.Module", device_mesh) -> "nn.Module":
         module._distribute_module_applied = True
         if self.use_dtensor:
             if isinstance(module, nn.Linear):
