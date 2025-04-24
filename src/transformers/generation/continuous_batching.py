@@ -108,7 +108,7 @@ class PagedAttentionCache(Cache):
 
         self.block_size = block_size
         self.num_blocks = num_blocks
-        cache_shape = (num_blocks, self.num_key_value_heads, self.block_size, self.head_dim)  # block_num first
+        cache_shape = (num_blocks, self.num_key_value_heads, self.block_size, self.head_dim)
 
         self.dtype = dtype
         self.device = device  # Store main device
@@ -184,8 +184,8 @@ class PagedAttentionCache(Cache):
         """Reshapes K/V cache for easier indexing during updates."""
         # Shape: (num_blocks * block_size, num_heads, head_dim)
         total_slots = self.num_blocks * self.block_size
-        k_cache = self.key_cache[layer_idx].view(total_slots, self.num_key_value_heads, self.head_dim)
-        v_cache = self.value_cache[layer_idx].view(total_slots, self.num_key_value_heads, self.head_dim)
+        k_cache = self.key_cache[layer_idx].view(self.num_key_value_heads, total_slots, self.head_dim)
+        v_cache = self.value_cache[layer_idx].view(self.num_key_value_heads, total_slots, self.head_dim)
         return k_cache, v_cache
 
     def update(
@@ -193,7 +193,8 @@ class PagedAttentionCache(Cache):
         key_states: torch.Tensor,
         value_states: torch.Tensor,
         layer_idx: int,
-        fill_index: torch.Tensor,
+        cumulative_seqlens_k: torch.Tensor,
+        cache_index,
         **kwargs,
     ) -> (torch.Tensor, torch.Tensor):
         """
@@ -210,11 +211,12 @@ class PagedAttentionCache(Cache):
             Tuple[`torch.Tensor`, `torch.Tensor`]: A tuple containing the *entire* key and value cache tensors for the specified layer, possibly after reshaping for attention calculation.
                                                   Note: The reshaping might depend on the specific attention implementation. Returning the full cache for now.
         """
+        fill_index = kwargs["fill_index"]
         if fill_index.numel() == 0:
             # Nothing to write, return the current cache state
             return self.key_cache[layer_idx], self.value_cache[layer_idx]
 
-        if key_states.shape[0] != fill_index.numel() or value_states.shape[0] != fill_index.numel():
+        if key_states.shape[2] != fill_index.numel() or value_states.shape[2] != fill_index.numel():
             raise ValueError(
                 f"Mismatch between number of tokens to write ({key_states.shape[0]}) and number of fill indices ({fill_index.numel()})"
             )
@@ -226,8 +228,8 @@ class PagedAttentionCache(Cache):
         indices_device = fill_index.to(k_cache_flat.device)
 
         try:
-            k_cache_flat[indices_device] = key_states.to(k_cache_flat.device, k_cache_flat.dtype)
-            v_cache_flat[indices_device] = value_states.to(v_cache_flat.device, v_cache_flat.dtype)
+            k_cache_flat[:, indices_device, :] = key_states.to(k_cache_flat.device, k_cache_flat.dtype)[0]
+            v_cache_flat[:, indices_device, :] = value_states.to(v_cache_flat.device, v_cache_flat.dtype)[0]
         except IndexError as e:
             logger.error(
                 f"IndexError during cache update. Fill indices shape: {indices_device.shape}, "
@@ -236,11 +238,8 @@ class PagedAttentionCache(Cache):
             )
             raise e
 
-        # The attention mechanism might need the cache in its original 4D shape or the flat 3D shape.
-        # Returning the original 4D tensors for now, as the attention function might reshape it internally
-        # based on block tables or other mechanisms.
-        # If the attention function *always* expects the flat cache, we could return k_cache_flat, v_cache_flat.
-        return self.key_cache[layer_idx], self.value_cache[layer_idx]
+        k_cache_flat, v_cache_flat = self._reshape_cache_for_update(layer_idx)
+        return k_cache_flat[:,cache_index,:][None,...], v_cache_flat[:,cache_index,:][None,...]
 
     def write_to_cache(
         self, request_id: str, key_states: torch.Tensor, value_states: torch.Tensor, logical_indices: List[int]
@@ -822,10 +821,6 @@ class ContinuousBatchProcessor:
         # TODO: Verify cumulative_seqlens_k logic - does it need full context length or just batch length?
         # Assuming flash_attn_varlen_func needs cumulative lengths of K *within the batch*:
         cumulative_seqlens_k_tensor = torch.tensor(cumulative_seqlens_k, dtype=torch.int32, device=self.model_device)
-        # TODO: cache_index and fill_index logic needs review based on model/attention requirements
-        # Assuming `fill_index` tells the cache where to write the *new* K/V for this batch
-        # Assuming `cache_index` tells the attention where to *read* K/V from (using block mapping)
-        # This seems highly dependent on the specific attention implementation using the cache.
 
         # Placeholder kwargs - these need careful construction based on assumed PagedAttention API used by model
         model_kwargs = {
@@ -833,16 +828,18 @@ class ContinuousBatchProcessor:
             "cumulative_seqlens_k": cumulative_seqlens_k_tensor,  # K includes context length? If so, need state.current_len()
             "max_seqlen_q": max_seqlen_q,
             "max_seqlen_k": max_seqlen_k,  # Needs to be max *total* K length in batch?
-            # "cache_index": torch.tensor(batch_cache_indices, dtype=torch.long, device=self.model_device), # Indices to READ from KV cache
-            # "fill_index": torch.tensor(
-            #     batch_fill_indices, dtype=torch.long, device=self.model_device
-            # ),  # Indices to WRITE to KV cache
+            "fill_index": torch.tensor(
+                batch_fill_indices, dtype=torch.long, device=self.model_device
+            ),  # Indices to WRITE to KV cache
+            "cache_index": torch.tensor(
+                batch_cache_indices, dtype=torch.long, device=self.model_device
+            ),  # Indices to READ from KV cache
             "logits_indices": logits_indices,  # Indices used *after* forward pass to get next token logits
             "block_tables": {
                 req_id: self.cache.get_block_table(req_id) for req_id in self.requests_to_process_next
             },  # Pass block tables if needed by attention mechanism
-            # Pass the cache object itself
-            "cache": self.cache,  # Or just "cache": self.cache if the model expects that name
+            "cache": self.cache,
+            "use_cache": False,
         }
         # Recalculate max_seqlen_k to be the maximum *total* sequence length in the batch
         max_total_len_k = 0
@@ -1095,12 +1092,7 @@ class ContinuousBatchingManager:
                         outputs = self.model.forward(
                             input_ids=input_ids,
                             position_ids=position_ids,
-                            # past_key_values=model_kwargs["past_key_values"],  # Pass the cache object
-                            # use_cache=True,  # Important for HF models
-                            # Pass other relevant kwargs prepared by the processor
-                            **{
-                                k: v for k, v in model_kwargs.items() if k not in ["past_key_values", "logits_indices"]
-                            },
+                            **model_kwargs,
                         )
                 except Exception as e:
                     logger.error(f"Model forward pass failed: {e}", exc_info=True)

@@ -9,7 +9,8 @@ from transformers.generation import GenerationConfig
 
 
 # --- Common Setup ---
-model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-2-7b-hf", attn_implementation="sdpa", torch_dtype=torch.float16, device_map="auto")
+# model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-2-7b-hf", attn_implementation="sdpa", torch_dtype=torch.float16, device_map="auto")
+model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-2-7b-hf", attn_implementation="eager", torch_dtype=torch.float16, device_map="auto")
 tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf", torch_dtype=torch.float16)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -29,8 +30,8 @@ generation_config = GenerationConfig(
     # temperature=0.7,
     # top_k=50,
     # Parameters relevant for Continuous Batching (can be tuned)
-    batch_size=8, # Internal micro-batch size for the processor
-    num_blocks=16,
+    batch_size=7, # Internal micro-batch size for the processor
+    num_blocks=8,
     block_size=1024
 )
 
@@ -172,7 +173,7 @@ print("Manager stopped.")
 print("Checking for any remaining results in queue...")
 while True:
     try:
-        result = manager.get_result(block=False)
+        result = manager.get_result()
         if result:
              req_id = result["request_id"]
              if req_id not in results: # Avoid printing duplicates
